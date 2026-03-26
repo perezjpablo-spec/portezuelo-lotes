@@ -1,0 +1,302 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>El Portezuelo - Gestión de Lotes</title>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        :root { --primary: #1e3c72; --secondary: #2a5298; --safe: #22c55e; --reserved: #f59e0b; --sold: #ef4444; --light: #f5f7fa; }
+        * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Segoe UI', sans-serif; }
+        body { background: var(--light); color: #333; }
+        .container { max-width: 1400px; margin: 0 auto; padding: 20px; }
+        .header { background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%); color: white; padding: 30px; border-radius: 15px; margin-bottom: 25px; box-shadow: 0 10px 40px rgba(0,0,0,0.1); }
+        .sync-status { display: inline-flex; align-items: center; gap: 8px; background: rgba(255,255,255,0.2); padding: 8px 16px; border-radius: 20px; font-size: 0.9em; margin-top: 10px; }
+        .dot { width: 10px; height: 10px; border-radius: 50%; background: #4ade80; }
+        .nav { display: flex; gap: 10px; margin-bottom: 20px; flex-wrap: wrap; }
+        .tab { padding: 12px 20px; background: white; border-radius: 10px; cursor: pointer; border: none; box-shadow: 0 2px 5px rgba(0,0,0,0.05); }
+        .tab.active { background: var(--primary); color: white; }
+        .section { display: none; background: white; padding: 25px; border-radius: 15px; box-shadow: 0 4px 15px rgba(0,0,0,0.05); }
+        .section.active { display: block; }
+        table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+        th, td { padding: 12px; text-align: left; border-bottom: 1px solid #eee; }
+        th { background: #fafafa; }
+        .estado { padding: 4px 8px; border-radius: 12px; font-size: 0.85em; font-weight: bold; text-transform: uppercase; }
+        .estado-libre { background: #dcfce7; color: var(--safe); }
+        .estado-reservado { background: #fef3c7; color: var(--reserved); }
+        .estado-vendido { background: #fee2e2; color: var(--sold); }
+        .btn { padding: 10px 20px; border: none; border-radius: 8px; cursor: pointer; font-weight: bold; transition: 0.3s; }
+        .btn-primary { background: var(--primary); color: white; }
+        .form-group { margin-bottom: 15px; }
+        .form-group label { display: block; margin-bottom: 5px; font-weight: bold; }
+        .form-control { width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 8px; }
+        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; }
+        .card-resumen { background: var(--primary); color: white; padding: 20px; border-radius: 12px; }
+        .modal { display: none; position: fixed; top:0; left:0; width:100%; height:100%; background: rgba(0,0,0,0.5); align-items: center; justify-content: center; z-index: 1000; }
+        .modal.active { display: flex; }
+        .modal-content { background: white; padding: 30px; border-radius: 15px; width: 100%; max-width: 400px; }
+        .notification { position: fixed; bottom: 20px; right: 20px; padding: 15px 25px; border-radius: 10px; color: white; transform: translateY(100px); transition: 0.3s; z-index: 2000; }
+        .notification.show { transform: translateY(0); }
+        .success { background: var(--safe); }
+        .error { background: var(--sold); }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🏡 El Portezuelo</h1>
+            <p>Sistema de Gestión de Lotes</p>
+            <div class="sync-status">
+                <div class="dot" id="syncDot"></div>
+                <span id="syncText">Iniciando sistema...</span>
+            </div>
+        </div>
+
+        <div class="nav">
+            <button class="tab active" onclick="showTab('lotes')">📋 Lista de Lotes</button>
+            <button class="tab" onclick="showTab('graficos')">📊 Estadísticas</button>
+            <button class="tab" onclick="showTab('calculadora')">🧮 Calculadora</button>
+            <button class="tab" onclick="showTab('config')">⚙️ Configuración</button>
+        </div>
+
+        <div id="lotes" class="section active">
+            <h2>Inventario de Lotes</h2>
+            <div style="overflow-x: auto;">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Lote</th>
+                            <th>Mza</th>
+                            <th>Superficie</th>
+                            <th>Precio (USD)</th>
+                            <th>Estado</th>
+                            <th>Acciones</th>
+                        </tr>
+                    </thead>
+                    <tbody id="tablaLotes">
+                        </tbody>
+                </table>
+            </div>
+        </div>
+
+        <div id="graficos" class="section">
+            <div class="grid">
+                <div><canvas id="chartEstado"></canvas></div>
+                <div><canvas id="chartPrecio"></canvas></div>
+            </div>
+        </div>
+
+        <div id="calculadora" class="section">
+            <h2>Simulador de Financiación</h2>
+            <div class="grid">
+                <div>
+                    <div class="form-group">
+                        <label>Precio Lote (USD)</label>
+                        <input type="number" id="calcPrecio" class="form-control" value="25000" oninput="calcular()">
+                    </div>
+                    <div class="form-group">
+                        <label>Anticipo (USD)</label>
+                        <input type="number" id="calcAnticipo" class="form-control" value="12500" oninput="calcular()">
+                    </div>
+                    <div class="form-group">
+                        <label>Cuotas</label>
+                        <input type="number" id="calcCuotas" class="form-control" value="36" oninput="calcular()">
+                    </div>
+                </div>
+                <div class="card-resumen">
+                    <h3>Resumen</h3>
+                    <p>Saldo a financiar: <span id="resSaldo">USD 0</span></p>
+                    <p>Interés total (1.5% mensual fijo): <span id="resInteres">USD 0</span></p>
+                    <hr style="margin: 10px 0; opacity: 0.3;">
+                    <h2 style="color: #4ade80;">Cuota: <span id="resCuota">USD 0</span></h2>
+                    <p id="resCuotaArs" style="font-size: 0.9em; opacity: 0.8;"></p>
+                </div>
+            </div>
+        </div>
+
+        <div id="config" class="section">
+            <h2>Configuración del Sistema</h2>
+            <div class="form-group" style="max-width: 300px;">
+                <label>Valor Dólar Oficial (ARS)</label>
+                <input type="number" id="configDolar" class="form-control" step="0.1">
+                <br>
+                <button class="btn btn-primary" onclick="guardarConfig()">Actualizar Dólar</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="modalEditar" class="modal">
+        <div class="modal-content">
+            <h3>Editar Lote <span id="editLoteName"></span></h3>
+            <input type="hidden" id="editLoteId">
+            <div class="form-group">
+                <label>Estado</label>
+                <select id="editEstado" class="form-control">
+                    <option value="libre">Libre</option>
+                    <option value="reservado">Reservado</option>
+                    <option value="vendido">Vendido</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label>Cliente / Notas</label>
+                <input type="text" id="editCliente" class="form-control">
+            </div>
+            <div style="display: flex; gap: 10px;">
+                <button class="btn btn-primary" onclick="actualizarLote()">Guardar</button>
+                <button class="btn" onclick="document.getElementById('modalEditar').classList.remove('active')">Cancelar</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="notif" class="notification"></div>
+
+    <script>
+        // CONFIGURACIÓN SUPABASE - ¡REEMPLAZA ESTOS DATOS!
+        const SUPABASE_URL = 'https://hqedfnfmlvtngiyvtuxg.supabase.co';
+        const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImhxZWRmbmZtbHZ0bmdpeXZ0dXhnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ0ODgyMjIsImV4cCI6MjA5MDA2NDIyMn0.2GDp2aOsESY-TSAR_Q0t6HNBbqdGj-IIhElN7C_m61E';
+        
+        const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+        let lotesData = [];
+        let configGlobal = { dolar_oficial: 1390.50 };
+
+        async function init() {
+            try {
+                document.getElementById('syncText').textContent = 'Conectando con Supabase...';
+                await cargarDatos();
+                document.getElementById('syncText').textContent = 'Sincronizado ✓';
+                document.getElementById('syncDot').style.background = '#4ade80';
+            } catch (error) {
+                console.error(error);
+                document.getElementById('syncText').textContent = 'Error de conexión';
+                document.getElementById('syncDot').style.background = '#ff4d4d';
+            }
+        }
+
+        async function cargarDatos() {
+            // Cargar Lotes
+            const { data: lotes, error: e1 } = await supabase.from('lotes').select('*').order('lote');
+            if (e1) throw e1;
+            lotesData = lotes;
+            renderTabla();
+            renderCharts();
+
+            // Cargar Config
+            const { data: config, error: e2 } = await supabase.from('configuracion').select('*').single();
+            if (config) {
+                configGlobal = config;
+                document.getElementById('configDolar').value = config.dolar_oficial;
+            }
+            calcular();
+        }
+
+        function renderTabla() {
+            const tbody = document.getElementById('tablaLotes');
+            tbody.innerHTML = lotesData.map(l => `
+                <tr>
+                    <td><b>${l.lote}</b></td>
+                    <td>${l.manzana || '-'}</td>
+                    <td>${l.superficie} m²</td>
+                    <td>USD ${l.precio_usd.toLocaleString()}</td>
+                    <td><span class="estado estado-${l.estado}">${l.estado}</span></td>
+                    <td><button class="btn btn-primary" style="padding: 5px 10px; font-size: 0.8em;" onclick="abrirEditor(${l.id})">Editar</button></td>
+                </tr>
+            `).join('');
+        }
+
+        function abrirEditor(id) {
+            const lote = lotesData.find(l => l.id === id);
+            document.getElementById('editLoteId').value = lote.id;
+            document.getElementById('editLoteName').textContent = lote.lote;
+            document.getElementById('editEstado').value = lote.estado;
+            document.getElementById('editCliente').value = lote.cliente_nombre || '';
+            document.getElementById('modalEditar').classList.add('active');
+        }
+
+        async function actualizarLote() {
+            const id = document.getElementById('editLoteId').value;
+            const estado = document.getElementById('editEstado').value;
+            const cliente = document.getElementById('editCliente').value;
+
+            const { error } = await supabase.from('lotes').update({
+                estado: estado,
+                cliente_nombre: cliente
+            }).eq('id', id);
+
+            if (error) {
+                mostrarNotif('Error al guardar: Inicia sesión en Supabase primero', 'error');
+            } else {
+                mostrarNotif('Lote actualizado', 'success');
+                document.getElementById('modalEditar').classList.remove('active');
+                cargarDatos();
+            }
+        }
+
+        function calcular() {
+            const precio = parseFloat(document.getElementById('calcPrecio').value) || 0;
+            const anticipo = parseFloat(document.getElementById('calcAnticipo').value) || 0;
+            const cuotas = parseInt(document.getElementById('calcCuotas').value) || 1;
+            
+            const saldo = Math.max(0, precio - anticipo);
+            const interesTotal = saldo * (1.5 / 100) * cuotas;
+            const total = saldo + interesTotal;
+            const cuota = total / cuotas;
+
+            document.getElementById('resSaldo').textContent = 'USD ' + saldo.toLocaleString();
+            document.getElementById('resInteres').textContent = 'USD ' + interesTotal.toLocaleString();
+            document.getElementById('resCuota').textContent = 'USD ' + cuota.toLocaleString(undefined, {minimumFractionDigits: 2});
+            
+            const ars = cuota * configGlobal.dolar_oficial;
+            document.getElementById('resCuotaArs').textContent = 'Equiv. en ARS: $' + ars.toLocaleString(undefined, {maximumFractionDigits:0});
+        }
+
+        async function guardarConfig() {
+            const nuevoDolar = parseFloat(document.getElementById('configDolar').value);
+            const { error } = await supabase.from('configuracion').update({ dolar_oficial: nuevoDolar }).eq('id', 1);
+            
+            if (error) {
+                mostrarNotif('Error: Requiere Login', 'error');
+            } else {
+                mostrarNotif('Dólar actualizado', 'success');
+                cargarDatos();
+            }
+        }
+
+        function showTab(tabId) {
+            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
+            event.target.classList.add('active');
+            document.getElementById(tabId).classList.add('active');
+        }
+
+        function renderCharts() {
+            const ctx1 = document.getElementById('chartEstado').getContext('2d');
+            const libres = lotesData.filter(l => l.estado === 'libre').length;
+            const vendidos = lotesData.filter(l => l.estado === 'vendido').length;
+            const reservados = lotesData.filter(l => l.estado === 'reservado').length;
+
+            if (window.myChart1) window.myChart1.destroy();
+            window.myChart1 = new Chart(ctx1, {
+                type: 'doughnut',
+                data: {
+                    labels: ['Libres', 'Vendidos', 'Reservados'],
+                    datasets: [{
+                        data: [libres, vendidos, reservados],
+                        backgroundColor: ['#22c55e', '#ef4444', '#f59e0b']
+                    }]
+                },
+                options: { plugins: { title: { display: true, text: 'Distribución de Lotes' } } }
+            });
+        }
+
+        function mostrarNotif(msg, tipo) {
+            const n = document.getElementById('notif');
+            n.textContent = msg;
+            n.className = `notification ${tipo} show`;
+            setTimeout(() => n.classList.remove('show'), 3000);
+        }
+
+        window.onload = init;
+    </script>
+</body>
+</html>
